@@ -104,7 +104,7 @@ class LeaderboardScreen(Screen):
                            getattr(r, self._sort_col) or 0),
             reverse=not self._sort_asc,
         )
-        if row_idx >= len(visible):
+        if row_idx < 0 or row_idx >= len(visible):
             return
         record = visible[row_idx]
         snippet = _build_snippet(record)
@@ -119,13 +119,18 @@ class LeaderboardScreen(Screen):
     async def action_refresh(self) -> None:
         status = self.query_one("#status", Label)
         status.update("Refreshing…")
-        results = await asyncio.gather(*[s.fetch() for s in SCRAPER_REGISTRY])
+        results = await asyncio.gather(*[s.fetch() for s in SCRAPER_REGISTRY], return_exceptions=True)
         errors = []
         record_lists = []
-        for scraper, (records, err) in zip(SCRAPER_REGISTRY, results):
-            record_lists.append(records)
-            if err:
-                errors.append(f"⚠ {scraper.name}: {type(err).__name__}")
+        for scraper, result in zip(SCRAPER_REGISTRY, results):
+            if isinstance(result, BaseException):
+                record_lists.append([])
+                errors.append(f"⚠ {scraper.name}: {type(result).__name__}")
+            else:
+                records, err = result
+                record_lists.append(records)
+                if err:
+                    errors.append(f"⚠ {scraper.name}: {type(err).__name__}")
         merged = merger.merge(record_lists)
         cache.write(merged)
         self._records = cache.read()
