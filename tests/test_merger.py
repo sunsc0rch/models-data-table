@@ -45,3 +45,10 @@ def test_merge_deduplicates_free_providers():
 def test_merge_empty_inputs():
     assert merge([[], []]) == []
     assert merge([]) == []
+
+
+def test_merge_does_not_merge_distinct_versions():
+    a = [ModelRecord(name="gpt-4")]
+    b = [ModelRecord(name="gpt-4o")]
+    result = merge([a, b])
+    assert len(result) == 2

@@ -1,14 +1,8 @@
 from dataclasses import fields
-from rapidfuzz import process, fuzz
-import re
+from rapidfuzz import process, fuzz, utils
 from core.models import ModelRecord
 
-THRESHOLD = 85
-
-
-def _normalize(s: str) -> str:
-    """Normalize model name for fuzzy matching by removing separators and lowercasing."""
-    return re.sub(r'[\s\-_]', '', s.lower())
+THRESHOLD = 95
 
 
 def merge(scraper_results: list[list[ModelRecord]]) -> list[ModelRecord]:
@@ -19,7 +13,7 @@ def merge(scraper_results: list[list[ModelRecord]]) -> list[ModelRecord]:
             match = process.extractOne(
                 record.name,
                 merged.keys(),
-                processor=_normalize,
+                processor=utils.default_process,
                 scorer=fuzz.token_sort_ratio,
                 score_cutoff=THRESHOLD,
             ) if merged else None
