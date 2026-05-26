@@ -1,4 +1,3 @@
-from dataclasses import fields
 from core.models import ModelRecord
 
 
