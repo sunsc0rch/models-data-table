@@ -16,13 +16,16 @@ Coding models only. Models tagged as image, video, audio, or embedding are exclu
 
 Each data source is an independent module. Results are merged by model name and written to a local `cache.json`. The TUI reads only from the cache and never blocks on network requests.
 
+New scrapers are added by: (1) creating a file in `scrapers/`, (2) subclassing `BaseScraper`, (3) adding the instance to the list in `scrapers/__init__.py`. No other files need to change.
+
 ```
 models_data_table/
 ├── app.py                        # Textual App entry point
 ├── ui/
 │   └── table_view.py             # main screen: table, toolbar, keybindings
 ├── scrapers/
-│   ├── base.py                   # BaseScraper with fetch() -> list[dict]
+│   ├── __init__.py               # SCRAPER_REGISTRY: list of active scrapers — only file to edit when adding a source
+│   ├── base.py                   # BaseScraper with fetch() -> list[ModelRecord]
 │   ├── artificialanalysis.py     # params, context window, provider
 │   ├── openrouter.py             # free models, context, output limits
 │   └── swebench.py               # SWE-bench % scores
@@ -32,6 +35,12 @@ models_data_table/
 ├── cache.json                    # local cache (gitignored)
 └── requirements.txt
 ```
+
+**Adding a new source** requires only two steps:
+1. Create `scrapers/mysource.py` subclassing `BaseScraper`, implement `fetch() -> list[ModelRecord]`
+2. Add `MyScraper()` to `SCRAPER_REGISTRY` in `scrapers/__init__.py`
+
+`ModelRecord` is a typed dataclass with all fields optional except `name`. A scraper only fills the fields it knows about — merger fills the rest from other sources.
 
 ## Data Sources
 
@@ -51,11 +60,7 @@ models_data_table/
 [Refresh button / 'r' key]
         │
         ▼
-asyncio.gather(
-  artificialanalysis.fetch(),
-  openrouter.fetch(),
-  swebench.fetch()
-)
+asyncio.gather(*[s.fetch() for s in SCRAPER_REGISTRY])
         │
         ▼
 merger.merge(results) → unified list[ModelRecord]
