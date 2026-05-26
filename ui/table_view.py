@@ -55,19 +55,22 @@ class LeaderboardScreen(Screen):
         else:
             self._render_table()
 
+    def _sort_key(self, r: ModelRecord) -> tuple:
+        val = getattr(r, self._sort_col)
+        if val is None:
+            return (1, "")
+        if isinstance(val, list):
+            return (0, ", ".join(val))
+        return (0, val)
+
+    def _visible_sorted_records(self) -> list[ModelRecord]:
+        records = [r for r in self._records if not self._free_only or r.free_providers]
+        return sorted(records, key=self._sort_key, reverse=not self._sort_asc)
+
     def _render_table(self) -> None:
-        records = self._records
-        if self._free_only:
-            records = [r for r in records if r.free_providers]
-        records = sorted(
-            records,
-            key=lambda r: (getattr(r, self._sort_col) is None,
-                           getattr(r, self._sort_col) or 0),
-            reverse=not self._sort_asc,
-        )
         table = self.query_one(DataTable)
         table.clear()
-        for r in records:
+        for r in self._visible_sorted_records():
             params = f"{r.params_b:.0f}B" if r.params_b is not None else "—"
             context = f"{r.context_k}K" if r.context_k is not None else "—"
             swe = f"{r.swe_bench_pct:.1f}%" if r.swe_bench_pct is not None else "—"
@@ -95,15 +98,7 @@ class LeaderboardScreen(Screen):
     def action_copy_snippet(self) -> None:
         table = self.query_one(DataTable)
         row_idx = table.cursor_row
-        visible = self._records
-        if self._free_only:
-            visible = [r for r in visible if r.free_providers]
-        visible = sorted(
-            visible,
-            key=lambda r: (getattr(r, self._sort_col) is None,
-                           getattr(r, self._sort_col) or 0),
-            reverse=not self._sort_asc,
-        )
+        visible = self._visible_sorted_records()
         if row_idx < 0 or row_idx >= len(visible):
             return
         record = visible[row_idx]
