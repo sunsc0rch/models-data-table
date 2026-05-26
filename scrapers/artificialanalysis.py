@@ -5,7 +5,7 @@ from core.models import ModelRecord
 from scrapers.base import BaseScraper
 
 URL = "https://artificialanalysis.ai/leaderboards/models"
-_NUXT_RE = re.compile(r"window\.__NUXT__\s*=\s*(\{.*?\});\s*$", re.DOTALL | re.MULTILINE)
+_NUXT_RE = re.compile(r"window\.__NUXT__\s*=\s*(\{.*\})", re.DOTALL)
 
 
 class ArtificialAnalysisScraper(BaseScraper):

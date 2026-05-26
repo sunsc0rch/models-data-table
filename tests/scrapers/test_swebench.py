@@ -53,3 +53,27 @@ async def test_swebench_error_on_failure():
 
     assert records == []
     assert err is not None
+
+
+@pytest.mark.asyncio
+async def test_swebench_handles_shuffled_columns():
+    """Verify column detection works when % Resolved appears before Model."""
+    shuffled_html = """
+<html><body>
+<table>
+  <thead><tr><th>% Resolved</th><th>Scaffold</th><th>Model</th></tr></thead>
+  <tbody>
+    <tr><td>55.30%</td><td>Agentless</td><td>SomeModel</td></tr>
+  </tbody>
+</table>
+</body></html>
+"""
+    with respx.mock:
+        respx.get(URL).mock(return_value=httpx.Response(200, text=shuffled_html))
+        scraper = SWEBenchScraper()
+        records, err = await scraper.fetch()
+
+    assert err is None
+    assert len(records) == 1
+    assert records[0].name == "SomeModel"
+    assert records[0].swe_bench_pct == pytest.approx(55.30)
