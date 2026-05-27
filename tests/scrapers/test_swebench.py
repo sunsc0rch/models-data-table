@@ -1,22 +1,29 @@
+import json
 import pytest
 import respx
 import httpx
 from scrapers.swebench import SWEBenchScraper
 
-URL = "https://www.swebench.com/verified.html"
+URL = "https://www.swebench.com/index.html"
 
-SAMPLE_HTML = """
-<html><body>
-<table>
-  <thead><tr><th>Model</th><th>% Resolved</th></tr></thead>
-  <tbody>
-    <tr><td>Claude Sonnet 4-5</td><td>72.10%</td></tr>
-    <tr><td>GPT-4o (2024-11)</td><td>50.80%</td></tr>
-    <tr><td>Devstral Small 2025</td><td>46.00%</td></tr>
-  </tbody>
-</table>
-</body></html>
-"""
+SAMPLE_DATA = [
+    {
+        "name": "bash-only",
+        "results": [
+            {"name": "Claude Opus 4.7", "resolved": 76.8},
+            {"name": "Gemini 3 Flash", "resolved": 75.8},
+            {"name": "GPT-4o", "resolved": 50.8},
+        ],
+    },
+    {
+        "name": "other-leaderboard",
+        "results": [
+            {"name": "ShouldBeIgnored", "resolved": 99.0},
+        ],
+    },
+]
+
+SAMPLE_HTML = f'<html><body><script type="application/json" id="leaderboard-data">{json.dumps(SAMPLE_DATA)}</script></body></html>'
 
 
 @pytest.mark.asyncio
@@ -29,7 +36,7 @@ async def test_swebench_extracts_scores():
     assert err is None
     assert len(records) == 3
     names = [r.name for r in records]
-    assert "Claude Sonnet 4-5" in names
+    assert "Claude Opus 4.7" in names
 
 
 @pytest.mark.asyncio
@@ -40,8 +47,32 @@ async def test_swebench_parses_percentages():
         records, _ = await scraper.fetch()
 
     by_name = {r.name: r for r in records}
-    assert by_name["Claude Sonnet 4-5"].swe_bench_pct == pytest.approx(72.10)
-    assert by_name["GPT-4o (2024-11)"].swe_bench_pct == pytest.approx(50.80)
+    assert by_name["Claude Opus 4.7"].swe_bench_pct == pytest.approx(76.8)
+    assert by_name["GPT-4o"].swe_bench_pct == pytest.approx(50.8)
+
+
+@pytest.mark.asyncio
+async def test_swebench_uses_bash_only_leaderboard():
+    """Only bash-only leaderboard entries should be returned."""
+    with respx.mock:
+        respx.get(URL).mock(return_value=httpx.Response(200, text=SAMPLE_HTML))
+        scraper = SWEBenchScraper()
+        records, _ = await scraper.fetch()
+
+    names = [r.name for r in records]
+    assert "ShouldBeIgnored" not in names
+
+
+@pytest.mark.asyncio
+async def test_swebench_returns_empty_when_no_script():
+    html = "<html><body><p>No data here</p></body></html>"
+    with respx.mock:
+        respx.get(URL).mock(return_value=httpx.Response(200, text=html))
+        scraper = SWEBenchScraper()
+        records, err = await scraper.fetch()
+
+    assert records == []
+    assert err is None
 
 
 @pytest.mark.asyncio
@@ -53,27 +84,3 @@ async def test_swebench_error_on_failure():
 
     assert records == []
     assert err is not None
-
-
-@pytest.mark.asyncio
-async def test_swebench_handles_shuffled_columns():
-    """Verify column detection works when % Resolved appears before Model."""
-    shuffled_html = """
-<html><body>
-<table>
-  <thead><tr><th>% Resolved</th><th>Scaffold</th><th>Model</th></tr></thead>
-  <tbody>
-    <tr><td>55.30%</td><td>Agentless</td><td>SomeModel</td></tr>
-  </tbody>
-</table>
-</body></html>
-"""
-    with respx.mock:
-        respx.get(URL).mock(return_value=httpx.Response(200, text=shuffled_html))
-        scraper = SWEBenchScraper()
-        records, err = await scraper.fetch()
-
-    assert err is None
-    assert len(records) == 1
-    assert records[0].name == "SomeModel"
-    assert records[0].swe_bench_pct == pytest.approx(55.30)

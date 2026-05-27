@@ -1,8 +1,9 @@
-from bs4 import BeautifulSoup
+import json
 from core.models import ModelRecord
 from scrapers.base import BaseScraper
 
-URL = "https://www.swebench.com/verified.html"
+URL = "https://www.swebench.com/index.html"
+LEADERBOARD_NAME = "bash-only"
 
 
 class SWEBenchScraper(BaseScraper):
@@ -10,26 +11,22 @@ class SWEBenchScraper(BaseScraper):
 
     async def _fetch(self) -> list[ModelRecord]:
         resp = await self._get(URL)
-        soup = BeautifulSoup(resp.text, "html.parser")
+        start = resp.text.find('id="leaderboard-data"')
+        if start == -1:
+            return []
+        tag_end = resp.text.index(">", start) + 1
+        close = resp.text.index("</script>", tag_end)
+        data = json.loads(resp.text[tag_end:close])
+        leaderboard = next(
+            (lb for lb in data if lb.get("name") == LEADERBOARD_NAME), None
+        )
+        if not leaderboard:
+            return []
         records = []
-        table = soup.find("table")
-        if not table:
-            return records
-        headers = [th.get_text(strip=True) for th in table.find_all("th")]
-        try:
-            name_idx = next(i for i, h in enumerate(headers) if "model" in h.lower())
-            pct_idx = next(i for i, h in enumerate(headers) if "resolved" in h.lower() or "%" in h)
-        except StopIteration:
-            return records
-        for row in table.find("tbody").find_all("tr"):
-            cells = row.find_all("td")
-            if len(cells) <= max(name_idx, pct_idx):
+        for entry in leaderboard.get("results", []):
+            name = entry.get("name") or entry.get("model")
+            resolved = entry.get("resolved")
+            if not name or resolved is None:
                 continue
-            name = cells[name_idx].get_text(strip=True)
-            pct_text = cells[pct_idx].get_text(strip=True).replace("%", "").strip()
-            try:
-                pct = float(pct_text)
-            except ValueError:
-                continue
-            records.append(ModelRecord(name=name, swe_bench_pct=pct))
+            records.append(ModelRecord(name=name, swe_bench_pct=float(resolved)))
         return records

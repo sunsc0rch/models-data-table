@@ -8,7 +8,9 @@ from textual.widgets import DataTable, Footer, Header, Label
 from textual import work
 
 import core.cache as cache
+import core.fcm_updater as fcm_updater
 import core.merger as merger
+import core.static_data as static_data
 from core.models import ModelRecord
 from scrapers import SCRAPER_REGISTRY
 
@@ -17,7 +19,7 @@ COLUMNS = [
     ("Provider", "provider"),
     ("Params (B)", "params_b"),
     ("Context (K)", "context_k"),
-    ("SWE-bench %", "swe_bench_pct"),
+    ("Coding", "swe_bench_pct"),
     ("Free via", "free_providers"),
 ]
 
@@ -57,6 +59,8 @@ class LeaderboardScreen(Screen):
 
     def _sort_key(self, r: ModelRecord) -> tuple:
         val = getattr(r, self._sort_col)
+        if self._sort_col == "swe_bench_pct":
+            val = _coding_pct(r)
         if val is None:
             return (1, "")
         if isinstance(val, list):
@@ -73,8 +77,9 @@ class LeaderboardScreen(Screen):
         for r in self._visible_sorted_records():
             params = f"{r.params_b:.0f}B" if r.params_b is not None else "—"
             context = f"{r.context_k}K" if r.context_k is not None else "—"
-            swe = f"{r.swe_bench_pct:.1f}%" if r.swe_bench_pct is not None else "—"
-            free = ", ".join(r.free_providers) if r.free_providers else "—"
+            score = _coding_pct(r)
+            swe = f"{score:.1f}%" if score is not None else "—"
+            free = _format_free_providers(r.free_providers)
             table.add_row(r.name, r.provider or "—", params, context, swe, free)
 
     def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
@@ -95,10 +100,24 @@ class LeaderboardScreen(Screen):
         status.update("[bold]Showing free models only[/bold]" if self._free_only else "")
         self._render_table()
 
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        visible = self._visible_sorted_records()
+        row_idx = event.cursor_row
+        if row_idx < 0 or row_idx >= len(visible):
+            return
+        record = visible[row_idx]
+        snippet = _build_snippet(record)
+        status = self.query_one("#status", Label)
+        try:
+            pyperclip.copy(snippet)
+            status.update(f"Copied snippet for [bold]{record.name}[/bold]")
+        except pyperclip.PyperclipException:
+            status.update(f"Clipboard unavailable. Snippet: {snippet}")
+
     def action_copy_snippet(self) -> None:
         table = self.query_one(DataTable)
-        row_idx = table.cursor_row
         visible = self._visible_sorted_records()
+        row_idx = table.cursor_row
         if row_idx < 0 or row_idx >= len(visible):
             return
         record = visible[row_idx]
@@ -114,10 +133,14 @@ class LeaderboardScreen(Screen):
     async def action_refresh(self) -> None:
         status = self.query_one("#status", Label)
         status.update("Refreshing…")
-        results = await asyncio.gather(*[s.fetch() for s in SCRAPER_REGISTRY], return_exceptions=True)
+        all_tasks = [*[s.fetch() for s in SCRAPER_REGISTRY], fcm_updater.refresh()]
+        all_results = await asyncio.gather(*all_tasks, return_exceptions=True)
+        scraper_results = all_results[: len(SCRAPER_REGISTRY)]
+        fcm_result = all_results[-1]
+
         errors = []
         record_lists = []
-        for scraper, result in zip(SCRAPER_REGISTRY, results):
+        for scraper, result in zip(SCRAPER_REGISTRY, scraper_results):
             if isinstance(result, BaseException):
                 record_lists.append([])
                 errors.append(f"⚠ {scraper.name}: {type(result).__name__}")
@@ -126,12 +149,41 @@ class LeaderboardScreen(Screen):
                 record_lists.append(records)
                 if err:
                     errors.append(f"⚠ {scraper.name}: {type(err).__name__}")
-        merged = merger.merge(record_lists)
+
+        if isinstance(fcm_result, BaseException) or (isinstance(fcm_result, tuple) and fcm_result[1]):
+            err = fcm_result if isinstance(fcm_result, BaseException) else fcm_result[1]
+            errors.append(f"⚠ fcm: {type(err).__name__}")
+
+        merged = static_data.enrich(merger.merge(record_lists))
         cache.write(merged)
         self._records = cache.read()
         self._render_table()
         msg = " | ".join(errors) if errors else f"Updated — {len(merged)} models"
         status.update(msg)
+
+
+_AA_CODING_MAX = 60.0  # empirical ceiling of AA coding index scale
+
+
+def _coding_pct(record: ModelRecord) -> float | None:
+    """Return a unified 0-100 coding % for any record.
+
+    SWE-bench and Aider scores are already in %; AA coding index (0-60 scale)
+    is normalised by dividing by the empirical maximum of 60.
+    """
+    if record.swe_bench_pct is not None:
+        return record.swe_bench_pct
+    if record.coding_index is not None:
+        return round(record.coding_index / _AA_CODING_MAX * 100, 1)
+    return None
+
+
+def _format_free_providers(providers: list[str]) -> str:
+    if not providers:
+        return "—"
+    if len(providers) <= 3:
+        return ", ".join(providers)
+    return f"{', '.join(providers[:3])} +{len(providers) - 3}"
 
 
 def _build_snippet(record: ModelRecord) -> str:

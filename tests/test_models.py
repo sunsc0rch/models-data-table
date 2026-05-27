@@ -13,6 +13,7 @@ def test_model_record_all_optional_except_name():
     assert r.context_k is None
     assert r.output_tokens is None
     assert r.swe_bench_pct is None
+    assert r.coding_index is None
     assert r.free_providers == []
     assert r.openrouter_id is None
     assert r.openrouter_name is None
