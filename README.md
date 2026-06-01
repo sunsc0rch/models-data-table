@@ -24,7 +24,8 @@ python app.py
 | `↑` / `↓` | Навигация по строкам |
 | Клик по заголовку | Сортировка по столбцу (повторный клик — обратный порядок) |
 | `f` | Показать только бесплатные модели |
-| `Enter` | Скопировать конфиг-сниппет в буфер обмена |
+| `Enter` | Скопировать конфиг-сниппет в буфер обмена (с trailing comma) |
+| `Shift+Enter` | То же, но без trailing comma (для последней записи) |
 | `q` / `Ctrl+C` | Выйти |
 
 ## Столбцы
@@ -50,19 +51,37 @@ python app.py
 
 ## Копирование сниппета для opencode
 
-`Enter` копирует JSON-блок, готовый к вставке в `~/.config/opencode/opencode.json`:
+`Enter` копирует JSON-блок с правильным отступом (8/10/12 пробелов) и trailing comma, готовый к вставке в `~/.config/opencode/opencode.json`:
 
 ```json
-"mistralai/devstral-small-2505:free": {
-  "name": "Devstral Small",
-  "limit": {
-    "context": 131072,
-    "output": 8192
-  }
-}
+        "mistralai/devstral-small-2505:free": {
+          "name": "Devstral Small",
+          "limit": {
+            "context": 131000,
+            "output": 8192
+          }
+        },
 ```
 
-Вставить в секцию `provider.openrouter.models`. Значения `context` и `output` берутся напрямую из OpenRouter API.
+**Куда вставлять:** в секцию `provider.<api_provider>.models` — нужный блок показывается в статус-баре сразу после копирования, например:
+
+> Copied **Devstral Small** → **provider.openrouter.models**
+
+`api_provider` резолвится по приоритету:
+
+1. `free_providers[0]` — первый элемент списка бесплатных провайдеров (отсортирован по `PROVIDER_PRIORITY`, так что это «лучший» вариант).
+2. Fallback `openrouter` если задан `openrouter_id`.
+3. `None` — копируется как есть, в статус-баре появляется предупреждение ⚠.
+
+**Имя модели** для ключа `"..."` берётся в таком порядке:
+
+1. `model_ids[api_provider]` — provider-specific API ID из пакета `free-coding-models` (например, для Groq это `llama-3.3-70b-versatile`, а не `Llama 3.3 70B:free`). Доступно после `r` (refresh).
+2. `openrouter_id` — fallback для openrouter (OpenRouter-стиль ID с `:free`).
+3. `<name>:free` — placeholder, помечается ⚠ в статус-баре; пользователь должен подставить правильный ID вручную.
+
+`Shift+Enter` — то же самое, но **без trailing comma** (для вставки последней записью, где запятая не нужна).
+
+Значения `context` и `output` берутся напрямую из OpenRouter API. Маппинг провайдеров — в `core/opencode_providers.py`.
 
 ## Источники данных
 

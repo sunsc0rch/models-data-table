@@ -9,6 +9,7 @@ def test_model_record_requires_name():
 def test_model_record_all_optional_except_name():
     r = ModelRecord(name="x")
     assert r.provider is None
+    assert r.api_provider is None
     assert r.params_b is None
     assert r.context_k is None
     assert r.output_tokens is None
@@ -17,6 +18,7 @@ def test_model_record_all_optional_except_name():
     assert r.free_providers == []
     assert r.openrouter_id is None
     assert r.openrouter_name is None
+    assert r.model_ids == {}
 
 
 def test_model_record_full():

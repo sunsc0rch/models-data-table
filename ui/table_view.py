@@ -12,6 +12,7 @@ import core.fcm_updater as fcm_updater
 import core.merger as merger
 import core.static_data as static_data
 from core.models import ModelRecord
+from core.opencode_providers import resolve_api_provider, resolve_model_id
 from scrapers import SCRAPER_REGISTRY
 
 COLUMNS = [
@@ -28,7 +29,8 @@ class LeaderboardScreen(Screen):
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
         Binding("f", "toggle_free", "Free only"),
-        Binding("enter", "copy_snippet", "Copy snippet"),
+        Binding("enter", "copy_snippet", "Copy + comma"),
+        Binding("shift+enter", "copy_snippet_last", "Copy (no comma)"),
         Binding("q", "app.quit", "Quit"),
     ]
 
@@ -101,31 +103,41 @@ class LeaderboardScreen(Screen):
         self._render_table()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        visible = self._visible_sorted_records()
-        row_idx = event.cursor_row
-        if row_idx < 0 or row_idx >= len(visible):
-            return
-        record = visible[row_idx]
-        snippet = _build_snippet(record)
-        status = self.query_one("#status", Label)
-        try:
-            pyperclip.copy(snippet)
-            status.update(f"Copied snippet for [bold]{record.name}[/bold]")
-        except pyperclip.PyperclipException:
-            status.update(f"Clipboard unavailable. Snippet: {snippet}")
+        self._do_copy(trailing_comma=True)
 
     def action_copy_snippet(self) -> None:
+        self._do_copy(trailing_comma=True)
+
+    def action_copy_snippet_last(self) -> None:
+        self._do_copy(trailing_comma=False)
+
+    def _do_copy(self, *, trailing_comma: bool) -> None:
         table = self.query_one(DataTable)
         visible = self._visible_sorted_records()
         row_idx = table.cursor_row
         if row_idx < 0 or row_idx >= len(visible):
             return
         record = visible[row_idx]
-        snippet = _build_snippet(record)
+        api_provider = resolve_api_provider(record)
+        snippet, id_source = _build_snippet(
+            record, api_provider=api_provider, trailing_comma=trailing_comma,
+        )
         status = self.query_one("#status", Label)
+        if api_provider:
+            where = f"provider.{api_provider}.models"
+        else:
+            where = "provider.<unknown>.models"
+        msg = f"Copied [bold]{record.name}[/bold] → [bold]{where}[/bold]"
+        if api_provider is None:
+            msg += "  ⚠ provider unknown — check opencode.json"
+        elif id_source == "fallback":
+            msg += (
+                f"  ⚠ no exact API ID for {api_provider} — "
+                f"placeholder used, verify the ID"
+            )
         try:
             pyperclip.copy(snippet)
-            status.update(f"Copied snippet for [bold]{record.name}[/bold]")
+            status.update(msg)
         except pyperclip.PyperclipException:
             status.update(f"Clipboard unavailable. Snippet: {snippet}")
 
@@ -186,10 +198,37 @@ def _format_free_providers(providers: list[str]) -> str:
     return f"{', '.join(providers[:3])} +{len(providers) - 3}"
 
 
-def _build_snippet(record: ModelRecord) -> str:
-    model_id = record.openrouter_id or f"{record.name}:free"
+def _build_snippet(
+    record: ModelRecord,
+    *,
+    api_provider: str | None = None,
+    indent: int = 8,
+    trailing_comma: bool = True,
+) -> tuple[str, str]:
+    """Build a JSON snippet that slots into ``provider.<key>.models``.
+
+    Default 8-space indent matches the layout used in
+    ``~/.config/opencode/opencode.json``. Trailing comma on by default
+    (typical for inserting mid-list); pass ``trailing_comma=False`` for
+    the final entry.
+
+    Returns ``(snippet, id_source)`` where ``id_source`` is one of
+    ``"model_ids"``, ``"openrouter_id"``, or ``"fallback"`` — see
+    ``core.opencode_providers.resolve_model_id``.
+    """
+    model_id, id_source = resolve_model_id(record, api_provider)
     display_name = record.openrouter_name or record.name
     context = (record.context_k or 128) * 1000
     output = record.output_tokens or 8192
-    body = json.dumps({"name": display_name, "limit": {"context": context, "output": output}}, indent=2)
-    return f'"{model_id}": {body}'
+    lines = json.dumps(
+        {"name": display_name, "limit": {"context": context, "output": output}},
+        indent=2,
+    ).split("\n")
+    # First line is the opening "{" — keep it on the key line.
+    # All other lines (already at 0/2/4 spaces from json.dumps) get
+    # shifted right by `indent` so they align under the key.
+    rest = "\n".join(" " * indent + line for line in lines[1:])
+    head = f'{" " * indent}"{model_id}": {lines[0]}'
+    body = f"{head}\n{rest}" if rest else head
+    suffix = "," if trailing_comma else ""
+    return body + suffix, id_source

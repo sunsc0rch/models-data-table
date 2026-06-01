@@ -24,6 +24,7 @@ class OpenRouterScraper(BaseScraper):
             output = (model.get("top_provider") or {}).get("max_completion_tokens")
             records.append(ModelRecord(
                 name=model.get("name", model_id),
+                api_provider="openrouter",
                 openrouter_id=model_id,
                 openrouter_name=model.get("name"),
                 context_k=context // 1000 if context else None,

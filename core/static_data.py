@@ -7,7 +7,13 @@ Applied after merge as a final pass. Never overwrites existing values.
 
 import re
 from core.models import ModelRecord
-from core.free_providers_data import EXTRA_PROVIDERS, FCM_PROVIDERS, PROVIDER_PRIORITY
+from core.free_providers_data import (
+    EXTRA_PROVIDERS,
+    FCM_MODEL_IDS,
+    FCM_PROVIDERS,
+    PROVIDER_PRIORITY,
+)
+from core.opencode_providers import PROVIDER_TO_OPENCODE_KEY
 
 # ---------------------------------------------------------------------------
 # Provider inference from name
@@ -145,6 +151,7 @@ def enrich(records: list[ModelRecord]) -> list[ModelRecord]:
         _fill_provider_from_name(r)
         _fill_from_specs(r)
         _fill_free_providers(r)
+        _fill_api_provider(r)
     return records
 
 
@@ -186,32 +193,63 @@ def _norm_for_free(s: str) -> str:
 
 # Normalized FCM cache — rebuilt at import time and after fcm_updater.refresh().
 _FCM_NORMALIZED: list[tuple[str, list[str]]] = []
+# Parallel cache: label_norm → {provider_short: api_id, ...}
+_FCM_IDS_NORMALIZED: list[tuple[str, dict[str, str]]] = []
 
 
 def _rebuild_fcm_cache() -> None:
     """Rebuild the normalized lookup table from FCM_PROVIDERS + EXTRA_PROVIDERS."""
-    global _FCM_NORMALIZED
+    global _FCM_NORMALIZED, _FCM_IDS_NORMALIZED
     combined: dict[str, list[str]] = {}
     for src in (FCM_PROVIDERS, EXTRA_PROVIDERS):
         for label, providers in src.items():
             seen = combined.setdefault(label, [])
             seen.extend(p for p in providers if p not in seen)
     _FCM_NORMALIZED = [(_norm_for_free(label), providers) for label, providers in combined.items()]
+    _FCM_IDS_NORMALIZED = [
+        (_norm_for_free(label), ids)
+        for label, ids in FCM_MODEL_IDS.items()
+    ]
 
 
 _rebuild_fcm_cache()
 
 
 def _fill_free_providers(r: ModelRecord) -> None:
-    """Add free providers discovered via FCM static mapping."""
+    """Add free providers (and their per-provider API model IDs) via FCM mapping."""
     r_norm = _norm_for_free(r.name)
     new: set[str] = set()
     for label_norm, providers in _FCM_NORMALIZED:
         if label_norm in r_norm:
             new.update(providers)
+    for label_norm, ids_map in _FCM_IDS_NORMALIZED:
+        if label_norm in r_norm:
+            for provider, api_id in ids_map.items():
+                # Map FCM short name (e.g. "Groq") to the opencode key
+                # (e.g. "groq") so record.model_ids is keyed the same way
+                # as record.api_provider and resolve_model_id works.
+                opencode_key = PROVIDER_TO_OPENCODE_KEY.get(provider, provider.lower())
+                r.model_ids.setdefault(opencode_key, api_id)
     if new:
         existing = set(r.free_providers)
         merged = list(existing | new)
         # Sort by canonical priority so display is consistent.
         priority = {p: i for i, p in enumerate(PROVIDER_PRIORITY)}
         r.free_providers = sorted(merged, key=lambda p: priority.get(p, len(PROVIDER_PRIORITY)))
+
+
+def _fill_api_provider(r: ModelRecord) -> None:
+    """Resolve api_provider from the highest-priority free_providers entry.
+
+    Only fills when currently None — never overwrites values set by scrapers
+    (e.g. openrouter scraper sets ``api_provider='openrouter'`` explicitly).
+    """
+    if r.api_provider:
+        return
+    if r.free_providers:
+        first = r.free_providers[0]
+        if first in PROVIDER_TO_OPENCODE_KEY:
+            r.api_provider = PROVIDER_TO_OPENCODE_KEY[first]
+            return
+    if r.openrouter_id:
+        r.api_provider = "openrouter"

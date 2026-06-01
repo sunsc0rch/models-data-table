@@ -9,7 +9,7 @@ CDN URL (no auth, no proxy needed):
 
 import re
 import httpx
-from core.free_providers_data import FCM_PROVIDERS
+from core.free_providers_data import FCM_MODEL_IDS, FCM_PROVIDERS
 
 CDN_URL = "https://cdn.jsdelivr.net/npm/free-coding-models@latest/sources.js"
 
@@ -35,35 +35,40 @@ _SHORT_NAMES: dict[str, str] = {
 async def refresh() -> tuple[int, Exception | None]:
     """
     Fetch the latest sources.js from CDN, parse it, and update FCM_PROVIDERS
-    in-place so that static_data enrichment picks up fresh provider data.
+    and FCM_MODEL_IDS in-place so that static_data enrichment picks up
+    fresh provider data and per-provider API model IDs.
     Returns (label_count, error_or_None).
     """
     try:
         async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
             resp = await client.get(CDN_URL)
             resp.raise_for_status()
-        fresh = _parse(resp.text)
-        if fresh:
+        fresh_providers, fresh_ids = _parse(resp.text)
+        if fresh_providers:
             FCM_PROVIDERS.clear()
-            FCM_PROVIDERS.update(fresh)
+            FCM_PROVIDERS.update(fresh_providers)
+            FCM_MODEL_IDS.clear()
+            FCM_MODEL_IDS.update(fresh_ids)
             # Rebuild the normalized cache used by static_data._fill_free_providers
             import core.static_data as sd
             sd._rebuild_fcm_cache()
-        return len(fresh), None
+        return len(fresh_providers), None
     except Exception as exc:
         return 0, exc
 
 
-def _parse(text: str) -> dict[str, list[str]]:
+def _parse(text: str) -> tuple[dict[str, list[str]], dict[str, dict[str, str]]]:
     """
     Pure-Python parser for the ES-module sources.js format.
 
-    Extracts: variable_name → [label, ...] from each `export const NAME = [...]`
-    Then maps: provider_key → (display_name, variable_name) from `export const sources = {...}`
-    Returns: {label: [provider_short_name, ...]}
+    Extracts: variable_name → [(api_id, label), ...] from each
+              `export const NAME = [...]` (each entry is `['api-id', 'Display Name']`).
+    Then maps: provider_key → (display_name, variable_name) from `export const sources = {...}`.
+    Returns: ({label: [provider_short_name, ...]},
+              {label: {provider_short_name: api_id, ...}})
     """
-    # ── Step 1: variable → labels ───────────────────────────────────────────
-    var_labels: dict[str, list[str]] = {}
+    # ── Step 1: variable → [(api_id, label), ...] ───────────────────────────
+    var_pairs: dict[str, list[tuple[str, str]]] = {}
     for m in re.finditer(r"export\s+const\s+(\w+)\s*=\s*\[", text):
         var_name = m.group(1)
         start = m.end()
@@ -75,15 +80,15 @@ def _parse(text: str) -> dict[str, list[str]]:
                 depth -= 1
             i += 1
         block = text[start : i - 1]
-        # Extract second element (label) from each tuple
-        labels = re.findall(r"\[\s*'[^']+'\s*,\s*'([^']+)'", block)
-        if labels:
-            var_labels[var_name] = labels
+        # Each entry: ['api-id', 'Display Name']
+        pairs = re.findall(r"\[\s*'([^']+)'\s*,\s*'([^']+)'\s*", block)
+        if pairs:
+            var_pairs[var_name] = pairs
 
     # ── Step 2: provider key → (display_name, var_name) ────────────────────
     sources_m = re.search(r"export\s+const\s+sources\s*=\s*\{", text)
     if not sources_m:
-        return {}
+        return {}, {}
 
     providers: dict[str, tuple[str, str]] = {}
     # Match entries like: key: { name: 'Display', ..., models: varName, }
@@ -97,16 +102,18 @@ def _parse(text: str) -> dict[str, list[str]]:
         key, name, var = m.group(1), m.group(2), m.group(3)
         providers[key] = (name, var)
 
-    # ── Step 3: build label → [provider_names] ─────────────────────────────
-    result: dict[str, list[str]] = {}
+    # ── Step 3: build label → [providers] and label → {provider: api_id} ──
+    result_providers: dict[str, list[str]] = {}
+    result_ids: dict[str, dict[str, str]] = {}
     for key, (display_name, var_name) in providers.items():
         if key in _SKIP:
             continue
         provider_short = _SHORT_NAMES.get(key, display_name)
-        for label in var_labels.get(var_name, []):
-            if label not in result:
-                result[label] = []
-            if provider_short not in result[label]:
-                result[label].append(provider_short)
+        for api_id, label in var_pairs.get(var_name, []):
+            providers_list = result_providers.setdefault(label, [])
+            if provider_short not in providers_list:
+                providers_list.append(provider_short)
+            ids_map = result_ids.setdefault(label, {})
+            ids_map.setdefault(provider_short, api_id)
 
-    return result
+    return result_providers, result_ids

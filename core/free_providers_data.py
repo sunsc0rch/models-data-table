@@ -203,3 +203,15 @@ PROVIDER_PRIORITY: list[str] = [
     "DashScope",
     "ZAI",
 ]
+
+
+# Provider-specific model IDs (label → {provider_short: api_id, ...}).
+# Populated at runtime by core.fcm_updater.refresh() from the live
+# free-coding-models sources.js. The static snapshot is intentionally empty —
+# regenerate by running the Node script in the docstring at the top of this
+# file and add an `FCM_MODEL_IDS` export alongside FCM_PROVIDERS.
+#
+# Example populated entry:
+#   "Llama 3.3 70B": {"OpenRouter": "meta-llama/llama-3.3-70b-instruct:free",
+#                     "Groq":       "llama-3.3-70b-versatile"},
+FCM_MODEL_IDS: dict[str, dict[str, str]] = {}
