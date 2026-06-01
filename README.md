@@ -1,6 +1,6 @@
 # AI Coding Models Leaderboard
 
-Интерактивная TUI-таблица AI-моделей для кодинга. ~290 моделей из 5 источников с сортировкой, фильтрацией и копированием конфига для opencode.
+Интерактивная TUI-таблица AI-моделей для кодинга. ~290 моделей из 6 источников с сортировкой, фильтрацией и копированием конфига для opencode.
 
 ## Установка
 
@@ -35,7 +35,8 @@ python app.py
 | Model | Все источники | Claude Opus 4.7 |
 | Provider | ArtificialAnalysis, статические данные | Anthropic |
 | Params (B) | ArtificialAnalysis, HuggingFace | 70B |
-| Context (K) | ArtificialAnalysis, OpenRouter, статические данные | 200K |
+| Context (K) | ArtificialAnalysis, OpenRouter, LiteLLM, статические данные | 200K |
+| Output (K) | OpenRouter, LiteLLM | 8K |
 | Coding | SWE-bench, Aider, ArtificialAnalysis (норм.) | 88.0% |
 | Free via | OpenRouter (live), FCM статик (14 провайдеров) | OpenRouter, NIM, Groq +5 |
 
@@ -93,8 +94,9 @@ python app.py
 | [SWE-bench](https://www.swebench.com) | SWE-bench % (bash-only leaderboard, 48 моделей) | Static HTML + JSON |
 | [Aider](https://aider.chat/docs/leaderboards/) | Coding pass rate %, 225 задач (69 моделей) | Static HTML |
 | [HuggingFace](https://huggingface.co/api/models) | Параметры open-weight моделей (safetensors metadata) | REST API |
+| [LiteLLM](https://github.com/BerriAI/litellm) | `output_tokens`, function-calling/vision-флаги, fallback для `context_k` (~982 chat/responses модели) | Статический JSON |
 
-После слияния к данным применяется статическое обогащение (`core/static_data.py`) — заполняет провайдера, контекст и приблизительные coding-скоры для моделей, которых нет в scrapers (около 50 записей). Дополнительно заполняет колонку **Free via** данными из `core/free_providers_data.py` — нормализованный маппинг 109 моделей на 14 провайдеров бесплатного доступа, извлечённый из локального пакета `free-coding-models`.
+После слияния к данным применяется статическое обогащение (`core/static_data.py`) — заполняет провайдера, контекст и приблизительные coding-скоры для моделей, которых нет в scrapers (около 50 записей). Дополнительно заполняет колонку **Free via** данными из `core/free_providers_data.py` — нормализованный маппинг 109 моделей на 14 провайдеров бесплатного доступа, извлечённый из локального пакета `free-coding-models`. **LiteLLM**-источник (`core/litellm_data.py`) параллельно загружается при `r` и заполняет `output_tokens` (было пусто у 95% моделей → теперь у ~57%), а также флаги `supports_function_calling` / `supports_vision` (невидимые в таблице, доступны через API). Стратегия матчинга: прямое совпадение нормализованного имени + двусторонний substring с порогом длины 70% (отсекает ложные матчи вроде «Qwen3.5 0.8B» → «Qwen3 8B»).
 
 ### Слияние источников
 

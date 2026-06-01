@@ -9,6 +9,7 @@ from textual import work
 
 import core.cache as cache
 import core.fcm_updater as fcm_updater
+import core.litellm_data as litellm_data
 import core.merger as merger
 import core.static_data as static_data
 from core.models import ModelRecord
@@ -20,6 +21,7 @@ COLUMNS = [
     ("Provider", "provider"),
     ("Params (B)", "params_b"),
     ("Context (K)", "context_k"),
+    ("Output (K)", "output_tokens_k"),
     ("Coding", "swe_bench_pct"),
     ("Free via", "free_providers"),
 ]
@@ -59,10 +61,24 @@ class LeaderboardScreen(Screen):
         else:
             self._render_table()
 
+    def _render_table(self) -> None:
+        table = self.query_one(DataTable)
+        table.clear()
+        for r in self._visible_sorted_records():
+            params = f"{r.params_b:.0f}B" if r.params_b is not None else "—"
+            context = f"{r.context_k}K" if r.context_k is not None else "—"
+            out = f"{r.output_tokens // 1000}K" if r.output_tokens else "—"
+            score = _coding_pct(r)
+            swe = f"{score:.1f}%" if score is not None else "—"
+            free = _format_free_providers(r.free_providers)
+            table.add_row(r.name, r.provider or "—", params, context, out, swe, free)
+
     def _sort_key(self, r: ModelRecord) -> tuple:
         val = getattr(r, self._sort_col)
         if self._sort_col == "swe_bench_pct":
             val = _coding_pct(r)
+        if self._sort_col == "output_tokens_k":
+            val = r.output_tokens
         if val is None:
             return (1, "")
         if isinstance(val, list):
@@ -79,10 +95,23 @@ class LeaderboardScreen(Screen):
         for r in self._visible_sorted_records():
             params = f"{r.params_b:.0f}B" if r.params_b is not None else "—"
             context = f"{r.context_k}K" if r.context_k is not None else "—"
+            out = f"{r.output_tokens // 1000}K" if r.output_tokens else "—"
             score = _coding_pct(r)
             swe = f"{score:.1f}%" if score is not None else "—"
             free = _format_free_providers(r.free_providers)
-            table.add_row(r.name, r.provider or "—", params, context, swe, free)
+            table.add_row(r.name, r.provider or "—", params, context, out, swe, free)
+
+    def _sort_key(self, r: ModelRecord) -> tuple:
+        val = getattr(r, self._sort_col)
+        if self._sort_col == "swe_bench_pct":
+            val = _coding_pct(r)
+        if self._sort_col == "output_tokens_k":
+            val = r.output_tokens
+        if val is None:
+            return (1, "")
+        if isinstance(val, list):
+            return (0, ", ".join(val))
+        return (0, val)
 
     def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
         col_map = {label: field for label, field in COLUMNS}
@@ -145,10 +174,15 @@ class LeaderboardScreen(Screen):
     async def action_refresh(self) -> None:
         status = self.query_one("#status", Label)
         status.update("Refreshing…")
-        all_tasks = [*[s.fetch() for s in SCRAPER_REGISTRY], fcm_updater.refresh()]
+        all_tasks = [
+            *[s.fetch() for s in SCRAPER_REGISTRY],
+            fcm_updater.refresh(),
+            litellm_data.refresh(),
+        ]
         all_results = await asyncio.gather(*all_tasks, return_exceptions=True)
         scraper_results = all_results[: len(SCRAPER_REGISTRY)]
-        fcm_result = all_results[-1]
+        fcm_result = all_results[len(SCRAPER_REGISTRY)]
+        litellm_result = all_results[len(SCRAPER_REGISTRY) + 1]
 
         errors = []
         record_lists = []
@@ -165,6 +199,18 @@ class LeaderboardScreen(Screen):
         if isinstance(fcm_result, BaseException) or (isinstance(fcm_result, tuple) and fcm_result[1]):
             err = fcm_result if isinstance(fcm_result, BaseException) else fcm_result[1]
             errors.append(f"⚠ fcm: {type(err).__name__}")
+
+        # LiteLLM refresh populates LITELLM_DATA in-place. Surface errors but
+        # don't fail the whole refresh — the data is additive.
+        litellm_err = None
+        if isinstance(litellm_result, BaseException):
+            litellm_err = litellm_result
+        elif isinstance(litellm_result, tuple) and litellm_result[1]:
+            litellm_err = litellm_result[1]
+        if litellm_err is not None:
+            errors.append(f"⚠ litellm: {type(litellm_err).__name__}")
+        # Invalidate the normalized-name index so _fill_from_litellm uses fresh data.
+        static_data.invalidate_litellm_cache()
 
         merged = static_data.enrich(merger.merge(record_lists))
         cache.write(merged)

@@ -14,6 +14,7 @@ from core.free_providers_data import (
     PROVIDER_PRIORITY,
 )
 from core.opencode_providers import PROVIDER_TO_OPENCODE_KEY
+from core import litellm_data
 
 # ---------------------------------------------------------------------------
 # Provider inference from name
@@ -152,6 +153,7 @@ def enrich(records: list[ModelRecord]) -> list[ModelRecord]:
         _fill_from_specs(r)
         _fill_free_providers(r)
         _fill_api_provider(r)
+        _fill_from_litellm(r)
     return records
 
 
@@ -253,3 +255,121 @@ def _fill_api_provider(r: ModelRecord) -> None:
             return
     if r.openrouter_id:
         r.api_provider = "openrouter"
+
+
+# ---------------------------------------------------------------------------
+# LiteLLM enrichment
+# ---------------------------------------------------------------------------
+#
+# LiteLLM (``BerriAI/litellm``) publishes a community-maintained table of model
+# metadata: max input/output tokens, function-calling / vision support, mode
+# (chat / responses / embedding). We use it to fill fields that scrapers miss
+# (output_tokens, function_calling, vision) and to double-check context_k.
+#
+# The data file is ~2 MB of JSON; we lazy-load it via ``litellm_data.refresh()``
+# which is called from the TUI's ``action_refresh`` parallel task list.
+#
+# Matching strategy (safety over recall):
+#   1. Direct normalized-name match.   "claude 3.5 sonnet" == "claude 3 5 sonnet"
+#   2. Bidirectional substring match, only if the shorter string is >=70% the
+#      length of the longer one. This catches "ministral 3 3b" -> "ministral
+#      3 3b 2512" (date-tagged variants) while rejecting "qwen 3 5 0 8b" ->
+#      "qwen3 8b" (0.8B mistaken for 8B).
+#
+# Filling policy: never overwrite existing values.
+
+_LITELLM_NOISE = re.compile(
+    r"\b(v\d+(?:\.\d+)*|preview|latest|exp|alpha|beta|instruct|chat|base|"
+    r"hf|gguf|fp8|bf16|q\d+|ft|fs|maas|public|cloud)\b",
+    re.IGNORECASE,
+)
+_LITELLM_DATE = re.compile(r"\b\d{4}[-/]?\d{2}(?:[-/]?\d{2})?\b")
+_LITELLM_PROVIDER_PREFIX = re.compile(r"^[A-Z][A-Za-z0-9 .+&/-]{1,30}:\s*")
+_LITELLM_PARENS = re.compile(r"\s*\([^)]*\)\s*")
+
+
+def _litellm_normalize(name: str) -> str:
+    """Normalize a model name for LiteLLM lookup.
+
+    Strips provider prefix (``Poolside:``), parentheticals (``(free)``,
+    ``(high reasoning)``), date codes, and version noise tokens.
+    """
+    n = _LITELLM_PARENS.sub(" ", name)
+    n = _LITELLM_PROVIDER_PREFIX.sub("", n)
+    n = re.sub(r"[:\-_./]+", " ", n)
+    n = n.lower()
+    n = _LITELLM_DATE.sub(" ", n)
+    n = _LITELLM_NOISE.sub(" ", n)
+    return re.sub(r"\s+", " ", n).strip()
+
+
+_LITELLM_INDEX: list[tuple[str, dict]] | None = None
+
+
+def _litellm_index() -> list[tuple[str, dict]]:
+    """Return ``[(normalized_name, entry), ...]`` from LiteLLM_DATA, cached.
+
+    Returns an empty list if LiteLLM data hasn't been refreshed yet.
+    """
+    global _LITELLM_INDEX
+    if _LITELLM_INDEX is None:
+        if not litellm_data.LITELLM_DATA:
+            return []
+        _LITELLM_INDEX = [
+            (_litellm_normalize(k), v) for k, v in litellm_data.LITELLM_DATA.items()
+        ]
+    return _LITELLM_INDEX
+
+
+def invalidate_litellm_cache() -> None:
+    """Drop the in-memory normalized-name index.
+
+    Call after ``litellm_data.refresh()`` so the next lookup uses fresh data.
+    """
+    global _LITELLM_INDEX
+    _LITELLM_INDEX = None
+
+
+def _fill_from_litellm(r: ModelRecord) -> None:
+    """Fill missing context_k / output_tokens / function_calling / vision from LiteLLM."""
+    idx = _litellm_index()
+    if not idx:
+        return
+    norm = _litellm_normalize(r.name)
+    if len(norm) < 3:
+        return
+    entry = _match_litellm(norm, idx)
+    if entry is None:
+        return
+    if r.context_k is None and entry.get("context_k") is not None:
+        r.context_k = entry["context_k"]
+    if r.output_tokens is None and entry.get("output_tokens") is not None:
+        r.output_tokens = entry["output_tokens"]
+    if not r.supports_function_calling and entry.get("supports_function_calling"):
+        r.supports_function_calling = True
+    if not r.supports_vision and entry.get("supports_vision"):
+        r.supports_vision = True
+
+
+def _match_litellm(
+    query: str, idx: list[tuple[str, dict]]
+) -> dict | None:
+    """Find the best LiteLLM entry for a normalized query string.
+
+    Strategy: direct match first, then bidirectional substring where the
+    shorter string is >=70% the length of the longer one. Returns the entry
+    dict or ``None``.
+    """
+    for norm_name, entry in idx:
+        if norm_name == query:
+            return entry
+    if len(query) < 4:
+        return None
+    for norm_name, entry in idx:
+        if len(norm_name) < 4:
+            continue
+        if query in norm_name or norm_name in query:
+            shorter, longer = sorted((len(query), len(norm_name)))
+            if shorter / longer >= 0.7:
+                return entry
+    return None

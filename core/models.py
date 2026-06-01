@@ -16,3 +16,5 @@ class ModelRecord:
     openrouter_id: Optional[str] = None
     openrouter_name: Optional[str] = None
     model_ids: dict[str, str] = field(default_factory=dict)
+    supports_function_calling: bool = False
+    supports_vision: bool = False
