@@ -87,7 +87,9 @@ class LeaderboardScreen(Screen):
 
     def _visible_sorted_records(self) -> list[ModelRecord]:
         records = [r for r in self._records if not self._free_only or r.free_providers]
-        return sorted(records, key=self._sort_key, reverse=not self._sort_asc)
+        with_val = [r for r in records if self._sort_key(r)[0] == 0]
+        without_val = [r for r in records if self._sort_key(r)[0] == 1]
+        return sorted(with_val, key=self._sort_key, reverse=not self._sort_asc) + without_val
 
     def _render_table(self) -> None:
         table = self.query_one(DataTable)
