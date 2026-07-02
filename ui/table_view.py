@@ -42,6 +42,11 @@ class LeaderboardScreen(Screen):
         self._free_only = False
         self._sort_col: str = "swe_bench_pct"
         self._sort_asc = False
+        self._aa_max: float = 60.0
+
+    def _refresh_aa_max(self) -> None:
+        vals = [r.coding_index for r in self._records if r.coding_index is not None]
+        self._aa_max = max(vals) if vals else 60.0
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -54,36 +59,13 @@ class LeaderboardScreen(Screen):
         for label, _ in COLUMNS:
             table.add_column(label, key=label)
         self._records = cache.read()
+        self._refresh_aa_max()
         if not self._records:
             self.query_one("#status", Label).update(
                 "No data — press [bold]R[/bold] to refresh"
             )
         else:
             self._render_table()
-
-    def _render_table(self) -> None:
-        table = self.query_one(DataTable)
-        table.clear()
-        for r in self._visible_sorted_records():
-            params = f"{r.params_b:.0f}B" if r.params_b is not None else "—"
-            context = f"{r.context_k}K" if r.context_k is not None else "—"
-            out = f"{r.output_tokens // 1000}K" if r.output_tokens else "—"
-            score = _coding_pct(r)
-            swe = f"{score:.1f}%" if score is not None else "—"
-            free = _format_free_providers(r.free_providers)
-            table.add_row(r.name, r.provider or "—", params, context, out, swe, free)
-
-    def _sort_key(self, r: ModelRecord) -> tuple:
-        val = getattr(r, self._sort_col)
-        if self._sort_col == "swe_bench_pct":
-            val = _coding_pct(r)
-        if self._sort_col == "output_tokens_k":
-            val = r.output_tokens
-        if val is None:
-            return (1, "")
-        if isinstance(val, list):
-            return (0, ", ".join(val))
-        return (0, val)
 
     def _visible_sorted_records(self) -> list[ModelRecord]:
         records = [r for r in self._records if not self._free_only or r.free_providers]
@@ -98,7 +80,7 @@ class LeaderboardScreen(Screen):
             params = f"{r.params_b:.0f}B" if r.params_b is not None else "—"
             context = f"{r.context_k}K" if r.context_k is not None else "—"
             out = f"{r.output_tokens // 1000}K" if r.output_tokens else "—"
-            score = _coding_pct(r)
+            score = _coding_pct(r, self._aa_max)
             swe = f"{score:.1f}%" if score is not None else "—"
             free = _format_free_providers(r.free_providers)
             table.add_row(r.name, r.provider or "—", params, context, out, swe, free)
@@ -106,7 +88,7 @@ class LeaderboardScreen(Screen):
     def _sort_key(self, r: ModelRecord) -> tuple:
         val = getattr(r, self._sort_col)
         if self._sort_col == "swe_bench_pct":
-            val = _coding_pct(r)
+            val = _coding_pct(r, self._aa_max)
         if self._sort_col == "output_tokens_k":
             val = r.output_tokens
         if val is None:
@@ -217,24 +199,23 @@ class LeaderboardScreen(Screen):
         merged = static_data.enrich(merger.merge(record_lists))
         cache.write(merged)
         self._records = cache.read()
+        self._refresh_aa_max()
         self._render_table()
         msg = " | ".join(errors) if errors else f"Updated — {len(merged)} models"
         status.update(msg)
 
 
-_AA_CODING_MAX = 60.0  # empirical ceiling of AA coding index scale
+def _coding_pct(record: ModelRecord, aa_max: float = 60.0) -> float | None:
+    """Return a unified 0–100 coding % for any record.
 
-
-def _coding_pct(record: ModelRecord) -> float | None:
-    """Return a unified 0-100 coding % for any record.
-
-    SWE-bench and Aider scores are already in %; AA coding index (0-60 scale)
-    is normalised by dividing by the empirical maximum of 60.
+    SWE-bench and Aider scores are already in %; AA coding index is
+    normalised against the live maximum across all loaded records so the
+    top model always reads 100% and no model can exceed it.
     """
     if record.swe_bench_pct is not None:
         return record.swe_bench_pct
     if record.coding_index is not None:
-        return round(record.coding_index / _AA_CODING_MAX * 100, 1)
+        return round(record.coding_index / aa_max * 100, 1)
     return None
 
 
