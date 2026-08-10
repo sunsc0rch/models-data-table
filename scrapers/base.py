@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import httpx
+from core.http import new_client
 from core.models import ModelRecord
 
 
@@ -19,7 +20,7 @@ class BaseScraper(ABC):
         ...
 
     async def _get(self, url: str, **kwargs) -> httpx.Response:
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+        async with new_client(self.timeout) as client:
             resp = await client.get(url, **kwargs)
             resp.raise_for_status()
             return resp

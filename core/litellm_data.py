@@ -14,7 +14,8 @@ separately from the scraper registry during ``action_refresh``.
 """
 import json
 import re
-import httpx
+
+from core.http import new_client
 
 
 LITELLM_URL = (
@@ -126,7 +127,7 @@ def _parse(json_text: str) -> dict[str, dict]:
 async def refresh() -> tuple[int, Exception | None]:
     """Fetch and populate ``LITELLM_DATA``. Returns ``(count, error_or_None)``."""
     try:
-        async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
+        async with new_client(20) as client:
             resp = await client.get(LITELLM_URL)
             resp.raise_for_status()
         fresh = _parse(resp.text)

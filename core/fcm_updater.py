@@ -8,8 +8,8 @@ CDN URL (no auth, no proxy needed):
 """
 
 import re
-import httpx
 from core.free_providers_data import FCM_MODEL_IDS, FCM_PROVIDERS
+from core.http import new_client
 
 CDN_URL = "https://cdn.jsdelivr.net/npm/free-coding-models@latest/sources.js"
 
@@ -40,7 +40,7 @@ async def refresh() -> tuple[int, Exception | None]:
     Returns (label_count, error_or_None).
     """
     try:
-        async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+        async with new_client(15) as client:
             resp = await client.get(CDN_URL)
             resp.raise_for_status()
         fresh_providers, fresh_ids = _parse(resp.text)
