@@ -22,7 +22,7 @@ COLUMNS = [
     ("Params (B)", "params_b"),
     ("Context (K)", "context_k"),
     ("Output (K)", "output_tokens_k"),
-    ("Coding", "swe_bench_pct"),
+    ("Coding", "coding_strength"),
     ("Free via", "free_providers"),
 ]
 
@@ -40,13 +40,12 @@ class LeaderboardScreen(Screen):
         super().__init__()
         self._records: list[ModelRecord] = []
         self._free_only = False
-        self._sort_col: str = "swe_bench_pct"
+        self._sort_col: str = "coding_strength"
         self._sort_asc = False
-        self._aa_max: float = 60.0
+        self._coding_scores: dict[int, float] = {}
 
-    def _refresh_aa_max(self) -> None:
-        vals = [r.coding_index for r in self._records if r.coding_index is not None]
-        self._aa_max = max(vals) if vals else 60.0
+    def _refresh_coding_scores(self) -> None:
+        self._coding_scores = _coding_percentile_scores(self._records)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -59,7 +58,7 @@ class LeaderboardScreen(Screen):
         for label, _ in COLUMNS:
             table.add_column(label, key=label)
         self._records = cache.read()
-        self._refresh_aa_max()
+        self._refresh_coding_scores()
         if not self._records:
             self.query_one("#status", Label).update(
                 "No data — press [bold]R[/bold] to refresh"
@@ -71,7 +70,9 @@ class LeaderboardScreen(Screen):
         records = [r for r in self._records if not self._free_only or r.free_providers]
         with_val = [r for r in records if self._sort_key(r)[0] == 0]
         without_val = [r for r in records if self._sort_key(r)[0] == 1]
-        return sorted(with_val, key=self._sort_key, reverse=not self._sort_asc) + without_val
+        return sorted(with_val, key=self._sort_key, reverse=not self._sort_asc) + sorted(
+            without_val, key=lambda r: r.name.casefold()
+        )
 
     def _render_table(self) -> None:
         table = self.query_one(DataTable)
@@ -80,15 +81,16 @@ class LeaderboardScreen(Screen):
             params = f"{r.params_b:.0f}B" if r.params_b is not None else "—"
             context = f"{r.context_k}K" if r.context_k is not None else "—"
             out = f"{r.output_tokens // 1000}K" if r.output_tokens else "—"
-            score = _coding_pct(r, self._aa_max)
-            swe = f"{score:.1f}%" if score is not None else "—"
+            score = self._coding_scores.get(id(r))
+            swe = f"{score:.1f}/100" if score is not None else "—"
             free = _format_free_providers(r.free_providers)
             table.add_row(r.name, r.provider or "—", params, context, out, swe, free)
 
     def _sort_key(self, r: ModelRecord) -> tuple:
+        if self._sort_col == "coding_strength":
+            score = self._coding_scores.get(id(r))
+            return (0, score) if score is not None else (1, "")
         val = getattr(r, self._sort_col)
-        if self._sort_col == "swe_bench_pct":
-            val = _coding_pct(r, self._aa_max)
         if self._sort_col == "output_tokens_k":
             val = r.output_tokens
         if val is None:
@@ -199,24 +201,38 @@ class LeaderboardScreen(Screen):
         merged = static_data.enrich(merger.merge(record_lists))
         cache.write(merged)
         self._records = cache.read()
-        self._refresh_aa_max()
+        self._refresh_coding_scores()
         self._render_table()
         msg = " | ".join(errors) if errors else f"Updated — {len(merged)} models"
         status.update(msg)
 
 
-def _coding_pct(record: ModelRecord, aa_max: float = 60.0) -> float | None:
-    """Return a unified 0–100 coding % for any record.
+def _coding_percentile_scores(records: list[ModelRecord]) -> dict[int, float]:
+    """Average within-benchmark percentile ranks into one 0–100 score.
 
-    SWE-bench and Aider scores are already in %; AA coding index is
-    normalised against the live maximum across all loaded records so the
-    top model always reads 100% and no model can exceed it.
+    Percentile ranks make scores from different benchmark scales comparable.
+    A model is averaged over the benchmarks for which it has a result.
     """
-    if record.swe_bench_pct is not None:
-        return record.swe_bench_pct
-    if record.coding_index is not None:
-        return round(record.coding_index / aa_max * 100, 1)
-    return None
+    benchmark_fields = ("swe_bench_pct", "aider_pct", "coding_index")
+    per_record: dict[int, list[float]] = {id(r): [] for r in records}
+
+    for field in benchmark_fields:
+        scored = [(r, getattr(r, field)) for r in records if getattr(r, field) is not None]
+        values = [value for _, value in scored]
+        count = len(values)
+        if not count:
+            continue
+        for record, value in scored:
+            less = sum(other < value for other in values)
+            equal = sum(other == value for other in values)
+            percentile = (less + equal / 2) / count * 100
+            per_record[id(record)].append(percentile)
+
+    return {
+        record_id: sum(scores) / len(scores)
+        for record_id, scores in per_record.items()
+        if scores
+    }
 
 
 def _format_free_providers(providers: list[str]) -> str:

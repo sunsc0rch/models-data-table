@@ -3,7 +3,10 @@ from core.models import ModelRecord
 from scrapers.base import BaseScraper
 
 URL = "https://www.swebench.com/index.html"
-LEADERBOARD_NAME = "bash-only"
+LEADERBOARD_NAME = "Verified"
+# The site no longer publishes a separate "bash-only" leaderboard; the
+# bash-only runs now live inside the Verified board under this agent name.
+BASH_ONLY_AGENT = "mini-SWE-agent"
 
 
 class SWEBenchScraper(BaseScraper):
@@ -24,6 +27,8 @@ class SWEBenchScraper(BaseScraper):
             return []
         records = []
         for entry in leaderboard.get("results", []):
+            if entry.get("agent") != BASH_ONLY_AGENT:
+                continue
             name = entry.get("name") or entry.get("model")
             resolved = entry.get("resolved")
             if not name or resolved is None:

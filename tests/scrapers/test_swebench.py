@@ -8,17 +8,18 @@ URL = "https://www.swebench.com/index.html"
 
 SAMPLE_DATA = [
     {
-        "name": "bash-only",
+        "name": "Verified",
         "results": [
-            {"name": "Claude Opus 4.7", "resolved": 76.8},
-            {"name": "Gemini 3 Flash", "resolved": 75.8},
-            {"name": "GPT-4o", "resolved": 50.8},
+            {"name": "Claude Opus 4.7", "resolved": 76.8, "agent": "mini-SWE-agent"},
+            {"name": "Gemini 3 Flash", "resolved": 75.8, "agent": "mini-SWE-agent"},
+            {"name": "GPT-4o", "resolved": 50.8, "agent": "mini-SWE-agent"},
+            {"name": "OtherAgentModel", "resolved": 99.0, "agent": "OpenHands"},
         ],
     },
     {
         "name": "other-leaderboard",
         "results": [
-            {"name": "ShouldBeIgnored", "resolved": 99.0},
+            {"name": "ShouldBeIgnored", "resolved": 99.0, "agent": "mini-SWE-agent"},
         ],
     },
 ]
@@ -53,7 +54,7 @@ async def test_swebench_parses_percentages():
 
 @pytest.mark.asyncio
 async def test_swebench_uses_bash_only_leaderboard():
-    """Only bash-only leaderboard entries should be returned."""
+    """Only mini-SWE-agent (bash-only) entries from Verified should be returned."""
     with respx.mock:
         respx.get(URL).mock(return_value=httpx.Response(200, text=SAMPLE_HTML))
         scraper = SWEBenchScraper()
@@ -61,6 +62,7 @@ async def test_swebench_uses_bash_only_leaderboard():
 
     names = [r.name for r in records]
     assert "ShouldBeIgnored" not in names
+    assert "OtherAgentModel" not in names
 
 
 @pytest.mark.asyncio

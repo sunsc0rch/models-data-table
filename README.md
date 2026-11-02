@@ -37,18 +37,18 @@ python app.py
 | Params (B) | ArtificialAnalysis, HuggingFace | 70B |
 | Context (K) | ArtificialAnalysis, OpenRouter, LiteLLM, статические данные | 200K |
 | Output (K) | OpenRouter, LiteLLM | 8K |
-| Coding | SWE-bench, Aider, ArtificialAnalysis (норм.) | 88.0% |
+| Coding rank | SWE-bench, Aider, ArtificialAnalysis | 82.4/100 |
 | Free via | OpenRouter (live), FCM статик (14 провайдеров) | OpenRouter, NIM, Groq +5 |
 
-### Колонка Coding
+### Колонка Coding rank
 
-Показывает лучшую доступную coding-метрику в единой шкале 0–100%:
+Показывает единый рейтинг 0–100, рассчитанный как среднее процентильных рангов модели по доступным бенчмаркам. Для каждого источника отдельно вычисляется процентиль: доля моделей с результатом ниже, плюс половина доли моделей с таким же результатом. Затем процентили SWE-bench, Aider и ArtificialAnalysis усредняются. Поэтому, например, 76% SWE-bench не сравниваются напрямую с 70% Aider.
 
-1. **SWE-bench %** — доля задач по починке реального кода, решённых bash-only агентом (bash-only leaderboard, яблоки к яблокам)
+1. **SWE-bench %** — доля задач по починке реального кода, решённых bash-only агентом (leaderboard Verified, прогоны mini-SWE-agent, яблоки к яблокам)
 2. **Aider %** — pass rate на 225 задачах Exercism в 6 языках (polyglot benchmark)
-3. **AA Coding (норм.)** — Coding Index от ArtificialAnalysis, нормализованный к 0–100% делением на эмпирический максимум шкалы (60)
+3. **AA Coding (норм.)** — frontiercode-2-0 (coding-бенчмарк ArtificialAnalysis), нормализованный к 0–100% делением на максимум среди загруженных моделей (топовая всегда 100%)
 
-Если для модели доступно несколько источников, показывается SWE-bench → Aider → AA в порядке приоритета. Значения из разных источников не суммируются и не смешиваются в одной строке.
+Если у модели есть результаты нескольких источников, в общий рейтинг входят все они. Сортировка по умолчанию — по этому рейтингу по убыванию; модели без результатов идут внизу по имени. Модель с результатами только одного источника сравнивается по своему процентилю в нём.
 
 ## Копирование сниппета для opencode
 
@@ -88,10 +88,10 @@ python app.py
 
 | Источник | Что даёт | Метод |
 |---|---|---|
-| [ArtificialAnalysis](https://artificialanalysis.ai/leaderboards/models) | Название, провайдер, параметры, контекст, Coding Index | HTML (RSC payload) |
+| [ArtificialAnalysis](https://artificialanalysis.ai/leaderboards/models) | Название, провайдер, параметры, контекст, coding-бенчмарки | HTML (RSC payload) |
 | [OpenRouter](https://openrouter.ai/api/v1/models) | Бесплатные модели (:free), контекст, лимит вывода | REST API |
 | [free-coding-models](https://github.com/nicholasgasior/free-coding-models) | Ещё 13 провайдеров бесплатного доступа: NIM, Groq, Cerebras, GitHub, Google AI, Mistral, Cloudflare, SambaNova, OVHcloud, Scaleway, DashScope, ZAI, Codestral | Статик (sources.js) |
-| [SWE-bench](https://www.swebench.com) | SWE-bench % (bash-only leaderboard, 48 моделей) | Static HTML + JSON |
+| [SWE-bench](https://www.swebench.com) | SWE-bench % (Verified leaderboard, прогоны mini-SWE-agent) | Static HTML + JSON |
 | [Aider](https://aider.chat/docs/leaderboards/) | Coding pass rate %, 225 задач (69 моделей) | Static HTML |
 | [HuggingFace](https://huggingface.co/api/models) | Параметры open-weight моделей (safetensors metadata) | REST API |
 | [LiteLLM](https://github.com/BerriAI/litellm) | `output_tokens`, function-calling/vision-флаги, fallback для `context_k` (~982 chat/responses модели) | Статический JSON |
@@ -177,7 +177,7 @@ models_data_table/
 │   ├── base.py                   # BaseScraper: fetch(), _get(), обработка ошибок
 │   ├── artificialanalysis.py     # RSC payload парсинг
 │   ├── openrouter.py             # REST API, text→text фильтр
-│   ├── swebench.py               # bash-only leaderboard из <script id="leaderboard-data">
+│   ├── swebench.py               # Verified leaderboard (mini-SWE-agent) из <script id="leaderboard-data">
 │   ├── aider.py                  # polyglot leaderboard, дедупликация по лучшему скору
 │   └── huggingface.py            # safetensors.total для open-weight моделей
 ├── core/

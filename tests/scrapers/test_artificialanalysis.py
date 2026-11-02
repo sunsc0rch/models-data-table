@@ -8,65 +8,40 @@ URL = "https://artificialanalysis.ai/leaderboards/models"
 
 MODELS = [
     {
-        "id": "aaa",
         "name": "Claude Sonnet 4.5",
         "modelCreatorName": "Anthropic",
         "contextWindowTokens": 200000,
         "totalParameters": 200,
         "deprecated": False,
-        "inputModalityText": True,
-        "outputModalityText": True,
-        "inputModalityImage": False,
-        "outputModalityImage": False,
-        "outputModalityVideo": False,
-        "outputModalitySpeech": False,
+        "scores": {"frontiercode-2-0": 0.45, "livecodebench": 0.70},
     },
     {
-        "id": "bbb",
         "name": "Gemini 2.5 Pro",
         "modelCreatorName": "Google",
         "contextWindowTokens": 1000000,
         "totalParameters": None,
         "deprecated": False,
-        "inputModalityText": True,
-        "outputModalityText": True,
-        "inputModalityImage": True,
-        "outputModalityImage": False,
-        "outputModalityVideo": False,
-        "outputModalitySpeech": False,
+        "scores": {"livecodebench": 0.60},
     },
     {
-        "id": "ccc",
         "name": "DALL-E 3",
         "modelCreatorName": "OpenAI",
         "contextWindowTokens": None,
         "totalParameters": None,
         "deprecated": False,
-        "inputModalityText": True,
-        "outputModalityText": False,
-        "inputModalityImage": False,
         "outputModalityImage": True,
-        "outputModalityVideo": False,
-        "outputModalitySpeech": False,
     },
     {
-        "id": "ddd",
         "name": "OldModel",
         "modelCreatorName": "SomeCo",
         "contextWindowTokens": 4000,
         "totalParameters": 7,
         "deprecated": True,
-        "inputModalityText": True,
-        "outputModalityText": True,
-        "inputModalityImage": False,
-        "outputModalityImage": False,
-        "outputModalityVideo": False,
-        "outputModalitySpeech": False,
     },
 ]
 
 RSC_PAYLOAD = json.dumps(
-    f'32:["$","div",null,{{"className":"container","children":[["$","$L33",null,{{"models":{json.dumps(MODELS)},"other":"data"}}]]}}]'
+    f'32:["$","div",null,{{"className":"container","children":[["$","$L33",null,{{"initialModels":{json.dumps(MODELS)},"other":"data"}}]]}}]'
 )
 SAMPLE_HTML = f'<html><body><script>self.__next_f.push([1,{RSC_PAYLOAD}])</script></body></html>'
 
@@ -119,6 +94,19 @@ async def test_aa_extracts_provider_and_params():
     assert by_name["Claude Sonnet 4.5"].context_k == 200
     assert by_name["Gemini 2.5 Pro"].params_b is None
     assert by_name["Gemini 2.5 Pro"].context_k == 1000
+
+
+@pytest.mark.asyncio
+async def test_aa_extracts_coding_score():
+    """Only frontiercode-2-0 is used (0..1 -> %); other benchmarks are ignored."""
+    with respx.mock:
+        respx.get(URL).mock(return_value=httpx.Response(200, text=SAMPLE_HTML))
+        scraper = ArtificialAnalysisScraper()
+        records, _ = await scraper.fetch()
+
+    by_name = {r.name: r for r in records}
+    assert by_name["Claude Sonnet 4.5"].coding_index == pytest.approx(45.0)
+    assert by_name["Gemini 2.5 Pro"].coding_index is None
 
 
 @pytest.mark.asyncio

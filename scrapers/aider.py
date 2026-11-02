@@ -66,6 +66,6 @@ class AiderScraper(BaseScraper):
                 best[norm] = score
 
         return [
-            ModelRecord(name=name, swe_bench_pct=score)
+            ModelRecord(name=name, aider_pct=score)
             for name, score in best.items()
         ]

@@ -1,5 +1,6 @@
 from dataclasses import fields
 from rapidfuzz import process, fuzz, utils
+from core.dedupe import deduplicate
 from core.models import ModelRecord
 
 THRESHOLD = 95
@@ -23,7 +24,7 @@ def merge(scraper_results: list[list[ModelRecord]]) -> list[ModelRecord]:
             else:
                 merged[record.name] = record
 
-    return list(merged.values())
+    return deduplicate(list(merged.values()))
 
 
 def _combine(base: ModelRecord, other: ModelRecord) -> ModelRecord:

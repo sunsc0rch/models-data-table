@@ -1,6 +1,7 @@
 import json
 from dataclasses import asdict
 from pathlib import Path
+from core.dedupe import deduplicate
 from core.models import ModelRecord
 
 CACHE_PATH = Path(__file__).parent.parent / "cache.json"
@@ -10,7 +11,7 @@ def read() -> list[ModelRecord]:
     if not CACHE_PATH.exists():
         return []
     data = json.loads(CACHE_PATH.read_text())
-    return [ModelRecord(**r) for r in data]
+    return deduplicate([ModelRecord(**r) for r in data])
 
 
 def write(records: list[ModelRecord]) -> None:
